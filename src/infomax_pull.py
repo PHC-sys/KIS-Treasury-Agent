@@ -72,6 +72,7 @@ LOAD_SPEC = [
     {"sheet": "IRS3Y",  "header_text": "일자", "fields": {"irs3y": "MID종가"}},
     {"sheet": "IRS10Y", "header_text": "일자", "fields": {"irs10y": "MID종가"}},
     {"sheet": "OIS3Y",  "header_text": "일자", "fields": {"ois3y": "MID종가"}},
+    {"sheet": "KOFR",   "header_text": "일자", "fields": {"kofr": "현재가"}},  # ECO/785831 (ECOS보다 신선)
 ]
 for _s in LOAD_SPEC:            # 전부 같은 통합 파일
     _s["file"] = IMX_FILE
@@ -139,6 +140,8 @@ def load(path=None):
             recs += _read_one(spec)
         except FileNotFoundError:
             print(f"  (건너뜀: 파일 없음 {spec['file']})")
+        except KeyError:   # 워크북에 해당 시트 아직 없음(예: build 재실행 전) → 안전 스킵
+            print(f"  (건너뜀: 시트 없음 '{spec['sheet']}' — build_infomax.py 재실행 필요)")
     ref = config.ref_date().isoformat()          # 미확정 당일 제외 (정산가 0 등)
     recs = [r for r in recs if r.date <= ref]
 

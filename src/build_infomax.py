@@ -24,6 +24,7 @@ SHEETS = [
     ("IRS3Y",  "IR",  "IRSTP1KRW03Y", ["일자", "MID종가"]),
     ("IRS10Y", "IR",  "IRSTP1KRW10Y", ["일자", "MID종가"]),
     ("OIS3Y",  "IR",  "IRSKM5KRW03Y", ["일자", "MID종가"]),
+    ("KOFR",   "ECO", "785831",       ["일자", "현재가"]),   # 한국 KOFR금리 (ECOS보다 신선)
 ]
 
 

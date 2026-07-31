@@ -6,25 +6,23 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# ── 인포맥스 유료 데이터 (공개 재배포 금지) ─────────────
-# 연합인포맥스 단말 데이터/산출물 — 코드만 공개, 데이터는 각자 수집.
-db/
-out/
+# ── 대용량 / 재생성 가능 — 제외 ─────────────────────────
+# raw: 원본 응답 아카이브(약 95MB, 재생성 가능)
 raw/
+# db: ledger sqlite(약 32MB) — infomax_data.xlsx + 공개소스로 재구성 가능
+db/
 *.sqlite
-*.sqlite-*
-infomax_data.xlsx
-*.xlsx
+*.sqlite-wal
+*.sqlite-shm
 
-# ── 저작권/내부자료 ──────────────────────────────────
-# 인포맥스 매뉴얼 PDF (저작권)
-Infomax Manual/
-# 차장님 원본 체크리스트 (내부자료)
+# ── 내부자료 / 라이선스 — 제외 ──────────────────────────
+# data: 차장님 체크리스트(시그널 설계=알파) — 공개 보류
 data/
-
-# ── 수기 입력 (S&P 라이선스 CDS 값 유출 방지) ──────────
-# 템플릿(manual_input.csv.example)만 공개, 실데이터 파일은 무시.
+# manual_input: S&P CDS 라이선스 → 템플릿(manual_input.csv.example)만 공개
 manual_input.csv
+# 산출 보고서(내부 배포용) — 루트의 docx/pdf만 제외. Infomax Manual/ 의 PDF는 포함.
+/*.docx
+/*.pdf
 
 # ── 시크릿 (절대 커밋 금지) ───────────────────────────
 .env
@@ -32,3 +30,5 @@ manual_input.csv
 *.key
 *.pem
 secret*
+
+# 포함되는 것(인포맥스 확인 완료): infomax_data.xlsx, out/ktb_daily.csv, Infomax Manual/

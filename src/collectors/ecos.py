@@ -10,10 +10,10 @@ import requests
 from collectors.base import Collector, Record
 
 # field → (통계표코드, 항목코드, 주기)  ※ 전부 일별(D). base_rate만 캘린더 매일값.
+# kofr는 인포맥스(ECO/785831)로 이관 — ECOS가 KOFR만 kofr.kr보다 +1영업일 늦게 미러링해서.
 FIELD_MAP = {
     "base_rate": ("722Y001", "0101000", "D"),
     "cd91":      ("817Y002", "010502000", "D"),
-    "kofr":      ("817Y002", "010901000", "D"),
     "y_ktb3":    ("817Y002", "010200000", "D"),
     "y_ktb10":   ("817Y002", "010210000", "D"),
     "y_ktb30":   ("817Y002", "010230000", "D"),

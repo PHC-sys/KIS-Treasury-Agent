@@ -54,9 +54,9 @@ SOURCE_FIELDS = {
         "fx_net_ktb3", "fx_net_ktb10",
         "bank_net_ktb3", "itrust_net_ktb3", "ins_net_ktb3",
         "bank_net_ktb10", "itrust_net_ktb10", "ins_net_ktb10",
-        "irs3y", "irs10y", "ois3y",
+        "irs3y", "irs10y", "ois3y", "kofr",
     ],
-    "ecos": ["base_rate", "cd91", "kofr", "y_ktb3", "y_ktb10", "y_ktb30"],
+    "ecos": ["base_rate", "cd91", "y_ktb3", "y_ktb10", "y_ktb30"],
     "fred": ["ust10"],
     "fx":   ["usdkrw"],
     "manual": ["kr_cds5"],   # S&P 라이선스로 자동 불가 → manual_input.csv
