@@ -1,0 +1,34 @@
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ── 인포맥스 유료 데이터 (공개 재배포 금지) ─────────────
+# 연합인포맥스 단말 데이터/산출물 — 코드만 공개, 데이터는 각자 수집.
+db/
+out/
+raw/
+*.sqlite
+*.sqlite-*
+infomax_data.xlsx
+*.xlsx
+
+# ── 저작권/내부자료 ──────────────────────────────────
+# 인포맥스 매뉴얼 PDF (저작권)
+Infomax Manual/
+# 차장님 원본 체크리스트 (내부자료)
+data/
+
+# ── 수기 입력 (S&P 라이선스 CDS 값 유출 방지) ──────────
+# 템플릿(manual_input.csv.example)만 공개, 실데이터 파일은 무시.
+manual_input.csv
+
+# ── 시크릿 (절대 커밋 금지) ───────────────────────────
+.env
+*.env
+*.key
+*.pem
+secret*
