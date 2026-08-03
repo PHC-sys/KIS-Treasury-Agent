@@ -77,6 +77,12 @@ LOAD_SPEC = [
 for _s in LOAD_SPEC:            # 전부 같은 통합 파일
     _s["file"] = IMX_FILE
 
+# MACRO 5종: 우리필드 → 워크북 시트명 (계산·배치는 config.MACRO_SPEC + _read_macro)
+MACRO_SHEETS = {
+    "cpi_yoy": "M_CPI", "core_cpi_yoy": "M_CORE", "bei": "M_BEI",
+    "exports_yoy": "M_EXP", "ip_yoy": "M_IP",
+}
+
 
 def _to_date(v):
     import datetime as dt
@@ -126,6 +132,67 @@ def _read_one(spec):
     return recs
 
 
+def _read_macro():
+    """MACRO 5종: 각 시트(일자=참조월말, 현재가) → 지수/금액이면 yoy 계산 →
+    발표일(config 규칙)에 배치 → 거래일마다 ffill(다음 발표 전까지 직전값 유지)."""
+    import bisect
+    import openpyxl
+    import config
+    from collectors.base import Record
+
+    TD = [d.isoformat() for d in config.trading_days(config.BACKFILL_START, config.ref_date())]
+
+    def ftd(s):                       # s(YYYY-MM-DD) 이후 첫 거래일
+        i = bisect.bisect_left(TD, s)
+        return TD[i] if i < len(TD) else None
+
+    def addm(ym, n):                  # 'YYYY-MM' + n개월
+        y, m = int(ym[:4]), int(ym[5:7])
+        m += n; y += (m - 1) // 12; m = (m - 1) % 12 + 1
+        return f"{y:04d}-{m:02d}"
+
+    place = {"d5": lambda m: ftd(addm(m, 1) + "-05"), "m1": lambda m: ftd(addm(m, 1) + "-01"),
+             "m2": lambda m: ftd(addm(m, 2) + "-01"), "d16": lambda m: ftd(addm(m, 1) + "-16")}
+
+    wb = openpyxl.load_workbook(IMX_FILE, data_only=True)
+    recs = []
+    for field, (code, kind, pl) in config.MACRO_SPEC.items():
+        sheet = MACRO_SHEETS[field]
+        if sheet not in wb.sheetnames:
+            print(f"  (건너뜀: MACRO 시트 없음 '{sheet}' — build_infomax.py 재실행 필요)")
+            continue
+        rows = list(wb[sheet].iter_rows(values_only=True))
+        hi = next(i for i, r in enumerate(rows)
+                  if r and "일자" in [str(c).strip() if c else "" for c in r])
+        hdr = [str(c).strip() if c else "" for c in rows[hi]]
+        di, vi = hdr.index("일자"), hdr.index("현재가")
+        series = {}                   # 참조월(YYYY-MM) → 현재가(지수/금액/값)
+        for r in rows[hi + 1:]:
+            d = _to_date(r[di]) if di < len(r) and r[di] is not None else None
+            if not d or vi >= len(r) or r[vi] in (None, ""):
+                continue
+            series[d[:7]] = float(r[vi])
+        pts = {}                      # 발표일(거래일) → 값
+        for m in sorted(series):
+            if kind == "yoy":
+                py = addm(m, -12)
+                if py not in series or series[py] == 0:
+                    continue
+                val = (series[m] / series[py] - 1) * 100
+            else:
+                val = series[m]
+            pd = place[pl](m)
+            if pd:
+                pts[pd] = val
+        keys = sorted(pts); last = None; ki = 0    # 거래일마다 ffill
+        for T in TD:
+            while ki < len(keys) and keys[ki] <= T:
+                last = pts[keys[ki]]; ki += 1
+            if last is not None:
+                recs.append(Record(date=T, field=field, value=last, as_of=T))
+    return recs
+
+
 def load(path=None):
     """LOAD_SPEC의 모든 엑셀을 읽어 sanity → ledger 적재(source='infomax')
     → 파생(fx_cum·roll_flag) 재계산 → CSV export. update.py와 동일 경로."""
@@ -142,6 +209,7 @@ def load(path=None):
             print(f"  (건너뜀: 파일 없음 {spec['file']})")
         except KeyError:   # 워크북에 해당 시트 아직 없음(예: build 재실행 전) → 안전 스킵
             print(f"  (건너뜀: 시트 없음 '{spec['sheet']}' — build_infomax.py 재실행 필요)")
+    recs += _read_macro()                         # MACRO 5종 (지수→yoy → 발표일 배치 → ffill)
     ref = config.ref_date().isoformat()          # 미확정 당일 제외 (정산가 0 등)
     recs = [r for r in recs if r.date <= ref]
 
@@ -206,7 +274,18 @@ def _refresh_wb(app, path, wait):
     p = Path(path)
     if not p.exists():
         print(f"  (없음: {p.name})"); return
-    wb = _com_retry(lambda: app.Workbooks.Open(str(p.resolve())))
+    # ★ 워크북 열 때 IMDH(26년치) '자동 재계산'이 돌면 Excel이 바빠져 이어지는 COM 호출을
+    #   거부(RPC_E_CALL_REJECTED)한다. → '수동 계산'으로 전환해 열고, 우리가 원할 때만
+    #   CalculateFullRebuild로 명시적 재계산. (계산모드 변경엔 워크북 1개 필요 → 없으면 blank)
+    blank = app.Workbooks.Add() if app.Workbooks.Count == 0 else None
+    try:
+        app.Calculation = -4135        # xlCalculationManual
+    except Exception:
+        pass
+    # blank 추가/계산모드 변경 직후 잠깐 바쁠 수 있음 → 유휴 대기 후 '직접' 열기.
+    # (Open을 _com_retry로 감싸면 첫 시도가 거부됐어도 실제론 열려서, 재시도가 이중오픈→None 반환)
+    _com_retry(lambda: app.Workbooks.Count, tries=12, delay=1)
+    wb = app.Workbooks.Open(str(p.resolve()))
     try:
         ref = dt.datetime.combine(config.ref_date(), dt.time())
         for k in range(1, wb.Worksheets.Count + 1):              # 모든 시트 날짜창 갱신
@@ -214,17 +293,26 @@ def _refresh_wb(app, path, wait):
             ws.Range("B1").Value = dt.datetime(2000, 1, 1)       # 시작일 = 가용 최대
             ws.Range("D1").Value = ref                            # 종료일 = 기준일
             ws.Range("F1").Value = 9000                           # 개수 (전체 이력)
-        _com_retry(lambda: app.CalculateFullRebuild())
+        _com_retry(lambda: app.CalculateFullRebuild())           # 명시적 재계산
         time.sleep(wait)
         _com_retry(lambda: app.CalculateFullRebuild())
         time.sleep(3)
         _com_retry(lambda: wb.Save())
+        try:
+            app.Calculation = -4105    # xlCalculationAutomatic (원복, 워크북 열려있을 때)
+        except Exception:
+            pass
         print(f"  refresh: {p.name}")
     finally:
         try:
             wb.Close(SaveChanges=True)
         except Exception:
             pass
+        if blank is not None:
+            try:
+                blank.Close(SaveChanges=False)
+            except Exception:
+                pass
 
 
 def refresh(path):
@@ -276,13 +364,51 @@ def _kill_headless_excel():
         pass
 
 
+def ensure_sheets():
+    """SHEETS 중 워크북에 없는 시트(신규 종목)를 openpyxl로 추가 — 엑셀/COM 불필요라 안전.
+    수식만 심어두면 이어지는 refresh(CalculateFullRebuild)가 값을 채운다."""
+    import datetime as dt
+    import openpyxl
+    import build_infomax as bi
+    import config
+    if not Path(IMX_FILE).exists():
+        return []
+    wb = openpyxl.load_workbook(IMX_FILE)
+    existing = set(wb.sheetnames)
+    start0 = dt.datetime(2000, 1, 1)
+    ref = dt.datetime.combine(config.ref_date(), dt.time())
+    added = []
+    for name, mkt, sym, items in bi.SHEETS:
+        if name in existing:
+            continue
+        ws = wb.create_sheet(name)
+        for cell, val in [("A1", "시작"), ("B1", start0), ("C1", "종료"), ("D1", ref),
+                          ("E1", "Data 개수"), ("F1", 9000), ("G1", "주기"), ("H1", "일"),
+                          ("I1", "정렬"), ("J1", "D"), ("K1", "영업일"), ("L1", 0),
+                          ("M1", "시세산출"), ("N1", "종가")]:
+            ws[cell] = val
+        for j, it in enumerate(items):
+            ws.cell(3, j + 1, it)
+        last = chr(ord("A") + len(items) - 1)
+        # XLL 함수는 파일에 _xll. 접두로 저장됨(openpyxl은 자동변환 안 함) → 맞춰서 기입.
+        ws["A2"] = (f'=_xll.IMDH("{mkt}","{sym}",A3:{last}3,$B$1,$D$1,$F$1,'
+                    f'"Per="&$H$1&",sort="&$J$1&",real=false,Bizday="&$L$1&'
+                    f'",Quote="&$N$1&",Pos=20,Orient=V,Title={name},DtFmt=1,TmFmt=1,unit=true")')
+        added.append(name)
+    if added:
+        wb.save(IMX_FILE)
+        print(f"  + 신규 시트 추가(openpyxl): {added}")
+    return added
+
+
 def refresh_all():
-    """통합 파일(infomax_data.xlsx) 하나만 새로고침(시트 7개 한 번에 재계산).
-    시작/끝에 자동화 잔재 Excel 청소."""
+    """통합 파일(infomax_data.xlsx) 새로고침. 없는 시트(신규 종목)는 먼저 openpyxl로
+    심고(ensure_sheets), COM refresh가 전 시트 재계산해 값을 채운다. 앞뒤로 잔재 Excel 청소."""
     _kill_headless_excel()
     if not Path(IMX_FILE).exists():
         print(f"  ⚠ {IMX_FILE} 없음 — 먼저 build_infomax.py로 생성 필요")
         return
+    ensure_sheets()          # COM 아닌 openpyxl로 신규 시트 삽입(수식만) → refresh가 채움
     refresh(IMX_FILE)
     _kill_headless_excel()
     print("refresh_all 완료")

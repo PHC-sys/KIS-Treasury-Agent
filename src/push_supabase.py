@@ -39,6 +39,12 @@ def main():
     # 테이블 생성(없으면)
     cols_sql = ",\n".join(f"  {c} {_coltype(c)}" for c in config.COLUMNS)
     cur.execute(f"CREATE TABLE IF NOT EXISTS ktb_daily (\n{cols_sql}\n)")
+    # 스키마 확장(신규 컬럼) 자동 반영 — 기존 테이블에 없는 컬럼만 추가.
+    for c in config.COLUMNS:
+        if c == "date":
+            continue
+        typ = "text" if c == "note" else "double precision"
+        cur.execute(f"ALTER TABLE ktb_daily ADD COLUMN IF NOT EXISTS {c} {typ}")
     # RLS 끔: 공개 시세데이터, 접근은 role GRANT로 통제(anon엔 grant 안 함).
     cur.execute("ALTER TABLE ktb_daily DISABLE ROW LEVEL SECURITY")
     conn.commit()

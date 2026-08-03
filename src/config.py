@@ -31,8 +31,10 @@ COLUMNS = [
     "ktb10_open", "ktb10_high", "ktb10_low",
     "days_to_expiry", "roll_flag",
     "bank_net_ktb10", "itrust_net_ktb10", "ins_net_ktb10", "irs10y",
+    # v2.5 MACRO 축 (인포맥스 ECO, 발표일 배치)
+    "cpi_yoy", "core_cpi_yoy", "bei", "exports_yoy", "ip_yoy",
 ]
-assert len(COLUMNS) == 42, f"컬럼 수 {len(COLUMNS)} != 42"
+assert len(COLUMNS) == 47, f"컬럼 수 {len(COLUMNS)} != 47"
 
 # 수집 대상 필드 = date/note 제외 (ledger에 들어갈 것들)
 DATA_FIELDS = [c for c in COLUMNS if c not in ("date", "note")]
@@ -55,12 +57,28 @@ SOURCE_FIELDS = {
         "bank_net_ktb3", "itrust_net_ktb3", "ins_net_ktb3",
         "bank_net_ktb10", "itrust_net_ktb10", "ins_net_ktb10",
         "irs3y", "irs10y", "ois3y", "kofr",
+        "cpi_yoy", "core_cpi_yoy", "bei", "exports_yoy", "ip_yoy",   # MACRO(ECO)
     ],
     "ecos": ["base_rate", "cd91", "y_ktb3", "y_ktb10", "y_ktb30"],
     "fred": ["ust10"],
     "fx":   ["usdkrw"],
     "manual": ["kr_cds5"],   # S&P 라이선스로 자동 불가 → manual_input.csv
 }
+
+# ── MACRO 5종 (인포맥스 ECO) — 지수/금액에서 yoy 계산 + 발표일 배치 ──────
+# (필드: (종목코드, kind, place))
+#  kind : 'yoy'=현재가(지수/금액)에서 전년동월비 계산 / 'level'=현재가 그대로
+#  place: 참조월 M 기준 '발표일' 배치 규칙(그 날짜 이후 첫 거래일부터 ffill).
+#    'd5'=익월 5일 / 'm1'=익월 1일 / 'm2'=익익월 1일 / 'd16'=익월 16일
+#  ※ 차장님 v2.5 실측 역산(cpi·core·bei·exports 100% 바이트 일치, ip는 개정차만).
+MACRO_SPEC = {
+    "cpi_yoy":      ("701979", "yoy",   "d5"),   # CPI 총지수
+    "core_cpi_yoy": ("701996", "yoy",   "d5"),   # 근원 CPI 지수
+    "bei":          ("703923", "level", "m1"),   # 기대인플레율(서베이)
+    "exports_yoy":  ("557150", "yoy",   "d16"),  # 수출액(금액)
+    "ip_yoy":       ("704507", "level", "m2"),   # 전산업생산 yoy
+}
+MACRO_FIELDS = list(MACRO_SPEC)
 
 # 거래일 앵커 = KTB 선물이 실제 거래된 날. 이 중 하나라도 있는 날만 행 생성(export).
 # (base_rate는 캘린더-매일, ust10은 미국캘린더, days_to_expiry/roll_flag는 매일 계산 →
