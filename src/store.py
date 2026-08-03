@@ -61,13 +61,18 @@ def quarantine(conn, rows):
 
 
 def last_date_for_source(conn, source):
-    """해당 소스가 적재한 마지막 date. 없으면 None (최초 실행 판단용)."""
+    """해당 소스가 '실제로 적재한' 마지막 date. 없으면 None (증분 창 판단용).
+
+    ★ source 필터 필수: base_rate 전진보간(recompute_derived, source='derived')이
+    ledger에 미래 날짜를 만들어, source 무시하고 MAX를 보면 증분이 '이미 다 됐다'고
+    오판해 실제 미공표였던 날(예: ECOS 시장금리)을 영영 안 긁는다."""
     fields = config.SOURCE_FIELDS.get(source, [])
     if not fields:
         return None
     qs = ",".join("?" * len(fields))
     row = conn.execute(
-        f"SELECT MAX(date) FROM ledger WHERE field IN ({qs})", fields
+        f"SELECT MAX(date) FROM ledger WHERE field IN ({qs}) AND source=?",
+        list(fields) + [source]
     ).fetchone()
     return row[0] if row and row[0] else None
 
