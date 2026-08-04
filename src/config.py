@@ -12,6 +12,7 @@ from pathlib import Path
 # 코드는 src/ 아래, 데이터(db·raw·out·manual)는 프로젝트 루트 아래.
 ROOT = Path(__file__).resolve().parent.parent   # = 프로젝트 루트 (src/의 부모)
 DB_PATH = ROOT / "db" / "ktb.sqlite"
+INTRADAY_DB_PATH = ROOT / "db" / "intraday.sqlite"   # 5분봉 (선물·현물) — 별도 파일·증분 전용
 RAW_DIR = ROOT / "raw"
 OUT_DIR = ROOT / "out"
 OUT_CSV = OUT_DIR / "ktb_daily.csv"
@@ -96,12 +97,55 @@ _expected = [f for f in DATA_FIELDS if f not in DERIVED_FIELDS]
 assert sorted(_owned) == sorted(_expected), (
     f"소스 매핑 누락/중복: {set(_expected) ^ set(_owned)}")
 
+# ── 인트라데이(5분봉) 사양 (단일 진실) ────────────────────────────────
+# 저장: db/intraday.sqlite, wide bars 테이블 (INTRADAY_DB_PATH). 증분 전용.
+# 선물=가격 / 현물=수익률(%). 검증완료 IMDH 레시피는 sandbox/ 참고.
+INTRADAY_CYCLE = 5                         # 분봉 주기 (5분)
+INTRADAY_SESSION = ("09:00:00", "15:45:00")  # 파이썬 날짜/시각 필터 경계 (B1/D1 상한 안 잘림)
+# ★실측: IMDH 분봉은 B1/D1(날짜창)이 무시되고 오직 count개가 '오늘 기준 뒤로' 온다.
+#  → 날짜 페이지네이션 불가. count가 유일한 레버. 접근 가능 이력 = 최근 count봉.
+#  선물 99999봉 ≈ 2021-07~(5년) / 현물 ≈ 2023-06~. 한 콜 15~17초.
+INTRADAY_BACKFILL_START = "2018-01-01"     # 저장 하한(가용이 더 얕으면 그대로). floor 필터용.
+INTRADAY_BACKFILL_COUNT = 99999            # 백필: 최대콜 = 가용 전이력 (IMDH 상한)
+INTRADAY_INCR_COUNT = 3000                 # 증분: 최근 N봉만(공백 크면 자동 99999로 승격)
+
+# symbol → 조회 스펙. items 순서 = bars 컬럼 매핑 순서(store가 참조).
+INTRADAY_SYMBOLS = {
+    # 국채 연결선물 (코드 안 바뀜). OI가 분봉으로도 옴.
+    "C65": {"kind": "FUT", "label": "KTB3 3년선물",
+            "items": ["일자", "시간", "시가", "고가", "저가", "현재가", "거래량", "미결제약정수량"],
+            "per": "MM", "real": "false"},
+    "C67": {"kind": "FUT", "label": "KTB10 10년선물",
+            "items": ["일자", "시간", "시가", "고가", "저가", "현재가", "거래량", "미결제약정수량"],
+            "per": "MM", "real": "false"},
+    # 현물 지표연속 (2/3/5/10년). 수익률·체결거래량. OI·체결거래대금 없음(미산출).
+    "KR1035G00002": {"kind": "BND", "label": "국고2년 지표",
+                     "items": ["일자", "시간", "시가", "고가", "저가", "현재가", "체결거래량"],
+                     "per": "분", "real": "false"},
+    "KR1035G00003": {"kind": "BND", "label": "국고3년 지표",
+                     "items": ["일자", "시간", "시가", "고가", "저가", "현재가", "체결거래량"],
+                     "per": "분", "real": "false"},
+    "KR1035G00005": {"kind": "BND", "label": "국고5년 지표",
+                     "items": ["일자", "시간", "시가", "고가", "저가", "현재가", "체결거래량"],
+                     "per": "분", "real": "false"},
+    "KR1035G00010": {"kind": "BND", "label": "국고10년 지표",
+                     "items": ["일자", "시간", "시가", "고가", "저가", "현재가", "체결거래량"],
+                     "per": "분", "real": "false"},
+}
+
 # ── 수집 기간 / 기준일 ───────────────────────────────────────────────
 # 최초 백필 시작일. 소스별로 그 소스 최초제공일이 더 늦으면 자동으로 그때부터(빈 응답 스킵).
 #  - ECOS(금리·환율): 2000+ 제공  - KRX(선물): ~2011부터  - 10년선물 상장: 2008-02
 from datetime import date as _date
 BACKFILL_START = _date(2000, 1, 1)   # 가용 최대(3년선물·국고금리 2000+, 10년선물 2008+)
-CLOSE_HOUR = 18      # 평일 이 시각(장마감·집계 반영) 이후에만 '당일'을 기준일로 인정
+# 당일 반영 게이트: 이 시각 이후 실행하면 '당일'을 기준일로 인정 → 당일 선물 종가부터 선반영.
+# 선물 마감 15:45 직후(16시)로 낮춤 → 마감 나오면 즉시 당일 채우고, 늦는 필드(ECOS 등)는
+# 이후 실행에서 idempotent 보강(progressive fill). 15:45 이전엔 당일 미포함(장중 현재가≠종가).
+CLOSE_HOUR = 16
+# 일별 새로고침 조회건수. IMDH는 count 기반(sort=D=최신순)이라 최근 N거래일만 재조회 = 증분.
+# 9000(≈전체 26년) 재계산이 아침 COM busy(RPC_E_CALL_REJECTED) 원인이었음 → 최근분만.
+# 월간 MACRO 시트엔 N개월(=10년) → yoy 계산 충분. env IMX_DAILY_COUNT로 오버라이드(전체 재백필 시 크게).
+DAILY_REFRESH_COUNT = 120
 
 
 _XKRX = None

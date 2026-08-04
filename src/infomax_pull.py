@@ -269,14 +269,16 @@ def _com_retry(fn, tries=6, delay=2):
 def _refresh_wb(app, path, wait):
     """워크북 하나: 종료일=기준일·개수 갱신 → 애드인 재계산 → 저장. (busy 재시도)"""
     import datetime as dt
+    import os
     import time
     import config
     p = Path(path)
     if not p.exists():
         print(f"  (없음: {p.name})"); return
-    # ★ 워크북 열 때 IMDH(26년치) '자동 재계산'이 돌면 Excel이 바빠져 이어지는 COM 호출을
-    #   거부(RPC_E_CALL_REJECTED)한다. → '수동 계산'으로 전환해 열고, 우리가 원할 때만
-    #   CalculateFullRebuild로 명시적 재계산. (계산모드 변경엔 워크북 1개 필요 → 없으면 blank)
+    # ★ 예전엔 F1=9000(26년치)라 열 때 IMDH 자동 재계산이 Excel을 바쁘게 만들어 이어지는 COM
+    #   호출을 거부(RPC_E_CALL_REJECTED)했다. → (1)'수동 계산'으로 열고 명시적 재계산,
+    #   (2)F1을 최근 N일(DAILY_REFRESH_COUNT)로 줄여 증분화 = 재계산량 자체를 축소.
+    #   (IMDH는 count 기반·sort=D → 최근 N개만. 옛 데이터는 이미 ledger에 있고 upsert 멱등.)
     blank = app.Workbooks.Add() if app.Workbooks.Count == 0 else None
     try:
         app.Calculation = -4135        # xlCalculationManual
@@ -288,11 +290,12 @@ def _refresh_wb(app, path, wait):
     wb = app.Workbooks.Open(str(p.resolve()))
     try:
         ref = dt.datetime.combine(config.ref_date(), dt.time())
+        count = int(os.environ.get("IMX_DAILY_COUNT", str(config.DAILY_REFRESH_COUNT)))
         for k in range(1, wb.Worksheets.Count + 1):              # 모든 시트 날짜창 갱신
             ws = wb.Worksheets(k)
-            ws.Range("B1").Value = dt.datetime(2000, 1, 1)       # 시작일 = 가용 최대
-            ws.Range("D1").Value = ref                            # 종료일 = 기준일
-            ws.Range("F1").Value = 9000                           # 개수 (전체 이력)
+            ws.Range("B1").Value = dt.datetime(2000, 1, 1)       # 시작일(형식상; IMDH는 무시)
+            ws.Range("D1").Value = ref                            # 종료일 = 기준일(당일 마감후=당일)
+            ws.Range("F1").Value = count                          # 최근 N거래일만(증분) — env로 조절
         _com_retry(lambda: app.CalculateFullRebuild())           # 명시적 재계산
         time.sleep(wait)
         _com_retry(lambda: app.CalculateFullRebuild())

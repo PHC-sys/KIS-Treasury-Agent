@@ -14,6 +14,8 @@ db/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+# out/intraday: 5분봉 CSV 내보내기(약 19MB) — db/intraday.sqlite에서 intraday_export.py로 재생성
+out/intraday/
 
 # ── 내부자료 / 라이선스 — 제외 ──────────────────────────
 # data: 차장님 체크리스트(시그널 설계=알파) — 공개 보류
