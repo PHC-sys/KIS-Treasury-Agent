@@ -14,6 +14,8 @@ db/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+# ★예외: db/intraday.sqlite(5분봉)만 강제 추적(git add -f). 인포 단말 없는 집 PC에서
+#  백필 못 하고 Supabase 미러도 없어 유일 사본이라 커밋. (일별 ktb.sqlite는 CSV/Supabase로 대체가능→제외 유지)
 # out/intraday: 5분봉 CSV 내보내기(약 19MB) — db/intraday.sqlite에서 intraday_export.py로 재생성
 out/intraday/
 
