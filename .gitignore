@@ -32,3 +32,6 @@ manual_input.csv
 secret*
 
 # 포함되는 것(인포맥스 확인 완료): infomax_data.xlsx, out/ktb_daily.csv, Infomax Manual/
+
+# sandbox 테스트 산출물(스크립트는 커밋, xlsx 출력은 제외)
+sandbox/*.xlsx
