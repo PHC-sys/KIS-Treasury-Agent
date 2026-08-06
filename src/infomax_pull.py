@@ -193,6 +193,61 @@ def _read_macro():
     return recs
 
 
+def _ust10_records(us_rows, kdays):
+    """us_rows: [(미국일 'YYYY-MM-DD', MID_Close), ...]. kdays: 정렬된 한국거래일 문자열.
+    ★as-of(룩어헤드 방지): 미국일 d의 종가는 한국 다음거래일 새벽 확정 → d를 '첫 한국거래일 > d'에 배정.
+    갭>10일이면 범위밖(예: 우리 데이터 이전 과거일)으로 스킵. 0/결측 스킵.
+    반환 Record(date=한국일, field='ust10', value, as_of=미국일)."""
+    import bisect
+    from datetime import date as _date
+    from collectors.base import Record
+    out = []
+    for d, v in us_rows:
+        if not d or v in (None, ""):
+            continue
+        v = float(v)
+        if v == 0:                                  # 0 = 미기록 → 빈칸(규율 §6)
+            continue
+        i = bisect.bisect_right(kdays, d)           # d 다음 한국거래일(첫 T > d)
+        if i >= len(kdays):
+            continue                                # 아직 배정할 한국거래일 없음(최신 미국일) → 다음 실행에서
+        kd = kdays[i]
+        if (_date.fromisoformat(kd) - _date.fromisoformat(d)).days > 10:
+            continue                                # 큰 갭(범위밖 과거일이 첫 한국일에 몰림) → 스킵
+        out.append(Record(date=kd, field="ust10", value=v, as_of=d))
+    return out
+
+
+def _read_ust10():
+    """워크북 US10Y 시트(미국일자·MID_Close) → as-of 시프트 → ust10 Records.
+    (일별 refresh가 최근 N일치 시트를 채우면 이게 읽어 최근 ust10 유지. 전이력은 별도 백필.)"""
+    import openpyxl
+    import config
+    if not Path(IMX_FILE).exists():
+        return []
+    wb = openpyxl.load_workbook(IMX_FILE, data_only=True)
+    if "US10Y" not in wb.sheetnames:
+        print("  (건너뜀: US10Y 시트 없음 — build_infomax.py add 또는 run.bat 재실행 필요)")
+        return []
+    rows = list(wb["US10Y"].iter_rows(values_only=True))
+    hi = next((i for i, r in enumerate(rows)
+               if r and "일자" in [str(c).strip() if c else "" for c in r]), None)
+    if hi is None:
+        return []
+    hdr = [str(c).strip() if c else "" for c in rows[hi]]
+    if "MID_Close" not in hdr:
+        return []
+    di, vi = hdr.index("일자"), hdr.index("MID_Close")
+    us_rows = []
+    for r in rows[hi + 1:]:
+        d = _to_date(r[di]) if di < len(r) and r[di] is not None else None
+        v = r[vi] if vi < len(r) else None
+        if d:
+            us_rows.append((d, v))
+    kdays = [k.isoformat() for k in config.trading_days(config.BACKFILL_START, config.ref_date())]
+    return _ust10_records(us_rows, kdays)
+
+
 def load(path=None):
     """LOAD_SPEC의 모든 엑셀을 읽어 sanity → ledger 적재(source='infomax')
     → 파생(fx_cum·roll_flag) 재계산 → CSV export. update.py와 동일 경로."""
@@ -210,6 +265,7 @@ def load(path=None):
         except KeyError:   # 워크북에 해당 시트 아직 없음(예: build 재실행 전) → 안전 스킵
             print(f"  (건너뜀: 시트 없음 '{spec['sheet']}' — build_infomax.py 재실행 필요)")
     recs += _read_macro()                         # MACRO 5종 (지수→yoy → 발표일 배치 → ffill)
+    recs += _read_ust10()                         # 미국채10년(IR/US10Y MID_Close) → as-of 시프트
     ref = config.ref_date().isoformat()          # 미확정 당일 제외 (정산가 0 등)
     recs = [r for r in recs if r.date <= ref]
 

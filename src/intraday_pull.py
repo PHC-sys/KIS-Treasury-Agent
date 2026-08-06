@@ -239,20 +239,22 @@ def _floor_str():
 
 def probe(names=None):
     """종목별 가용 이력 깊이 확인 (최대콜 1번). 저장 안 함. 종목마다 프레시 앱."""
-    for sym, spec in _symbols(names):
-        _kill_headless_excel()
-        app, blank = _open_app()
-        try:
-            bars = _pull(app, sym, spec, config.INTRADAY_BACKFILL_COUNT)
-        finally:
-            _close_app(app, blank)
-        if bars:
-            days = len({b[1][:10] for b in bars})
-            print(f"  {sym:14} {spec['label']:12} {bars[0][1]} ~ {bars[-1][1]} "
-                  f"| {len(bars)}봉 / {days}거래일")
-        else:
-            print(f"  {sym:14} {spec['label']:12} 데이터 없음")
-    _kill_headless_excel()
+    try:
+        for sym, spec in _symbols(names):
+            _kill_headless_excel()
+            app, blank = _open_app()
+            try:
+                bars = _pull(app, sym, spec, config.INTRADAY_BACKFILL_COUNT)
+            finally:
+                _close_app(app, blank)
+            if bars:
+                days = len({b[1][:10] for b in bars})
+                print(f"  {sym:14} {spec['label']:12} {bars[0][1]} ~ {bars[-1][1]} "
+                      f"| {len(bars)}봉 / {days}거래일")
+            else:
+                print(f"  {sym:14} {spec['label']:12} 데이터 없음")
+    finally:
+        _kill_headless_excel()          # ★마지막 종목 자동화 Excel까지 확실히 종료(좀비 방지)
 
 
 def _ingest(conn, sym, spec, count, floor, newer_than=None):
@@ -279,10 +281,13 @@ def backfill(names=None):
     conn = store.connect()
     store.init_db(conn)
     floor = _floor_str()
-    for sym, spec in _symbols(names):
-        print(f"  ▶ backfill {sym} ({spec['label']})")
-        n, f, l, _ = _ingest(conn, sym, spec, config.INTRADAY_BACKFILL_COUNT, floor)
-        print(f"    = {sym}: {n}봉  {f} → {l}" if n else f"    = {sym}: 데이터 없음")
+    try:
+        for sym, spec in _symbols(names):
+            print(f"  ▶ backfill {sym} ({spec['label']})")
+            n, f, l, _ = _ingest(conn, sym, spec, config.INTRADAY_BACKFILL_COUNT, floor)
+            print(f"    = {sym}: {n}봉  {f} → {l}" if n else f"    = {sym}: 데이터 없음")
+    finally:
+        _kill_headless_excel()          # ★마지막 종목 자동화 Excel까지 확실히 종료(좀비 방지)
     print("backfill 완료:", store.coverage(conn))
     conn.close()
 
@@ -296,18 +301,21 @@ def sync(names=None):
     floor = _floor_str()
     incr = config.INTRADAY_INCR_COUNT
     full = config.INTRADAY_BACKFILL_COUNT
-    for sym, spec in _symbols(names):
-        last = store.last_ts(conn, sym)
-        if last is None:                             # 이력 없음 → 백필
-            print(f"  ▶ {sym} ({spec['label']}) 이력 없음 → 백필")
-            n, f, l, _ = _ingest(conn, sym, spec, full, floor)
-        else:                                        # 증분: 최근 incr봉 중 last_ts 이후만
-            print(f"  ▶ {sym} ({spec['label']}) 증분 (마지막 {last})")
-            n, f, l, raw_min = _ingest(conn, sym, spec, incr, floor, newer_than=last)
-            if raw_min is not None and raw_min > last:   # incr가 공백을 못 덮음 → 99999로 승격
-                print(f"    · 공백 큼(최소ts {raw_min} > {last}) → 전체콜로 재수집")
-                n, f, l, _ = _ingest(conn, sym, spec, full, floor, newer_than=last)
-        print(f"    = {sym}: +{n}봉  {f} → {l}" if n else f"    = {sym}: 신규 없음")
+    try:
+        for sym, spec in _symbols(names):
+            last = store.last_ts(conn, sym)
+            if last is None:                             # 이력 없음 → 백필
+                print(f"  ▶ {sym} ({spec['label']}) 이력 없음 → 백필")
+                n, f, l, _ = _ingest(conn, sym, spec, full, floor)
+            else:                                        # 증분: 최근 incr봉 중 last_ts 이후만
+                print(f"  ▶ {sym} ({spec['label']}) 증분 (마지막 {last})")
+                n, f, l, raw_min = _ingest(conn, sym, spec, incr, floor, newer_than=last)
+                if raw_min is not None and raw_min > last:   # incr가 공백을 못 덮음 → 99999로 승격
+                    print(f"    · 공백 큼(최소ts {raw_min} > {last}) → 전체콜로 재수집")
+                    n, f, l, _ = _ingest(conn, sym, spec, full, floor, newer_than=last)
+            print(f"    = {sym}: +{n}봉  {f} → {l}" if n else f"    = {sym}: 신규 없음")
+    finally:
+        _kill_headless_excel()          # ★마지막 종목 자동화 Excel까지 확실히 종료(좀비 방지)
     print("동기화 완료:", store.coverage(conn))
     conn.close()
 

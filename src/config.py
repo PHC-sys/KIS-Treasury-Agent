@@ -59,9 +59,9 @@ SOURCE_FIELDS = {
         "bank_net_ktb10", "itrust_net_ktb10", "ins_net_ktb10",
         "irs3y", "irs10y", "ois3y", "kofr",
         "cpi_yoy", "core_cpi_yoy", "bei", "exports_yoy", "ip_yoy",   # MACRO(ECO)
+        "ust10",   # 미국채 10년 지표금리(IR/US10Y MID_Close). FRED(DGS10) 대체 — 지연 없음. as-of 시프트.
     ],
     "ecos": ["base_rate", "cd91", "y_ktb3", "y_ktb10", "y_ktb30"],
-    "fred": ["ust10"],
     "fx":   ["usdkrw"],
     "manual": ["kr_cds5"],   # S&P 라이선스로 자동 불가 → manual_input.csv
 }

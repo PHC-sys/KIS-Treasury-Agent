@@ -30,6 +30,9 @@ SHEETS = [
     ("IRS10Y", "IR",  "IRSTP1KRW10Y", ["일자", "MID종가"]),
     ("OIS3Y",  "IR",  "IRSKM5KRW03Y", ["일자", "MID종가"]),
     ("KOFR",   "ECO", "785831",       ["일자", "현재가"]),   # 한국 KOFR금리 (ECOS보다 신선)
+    # 미국채 10년 지표금리(on-the-run) MID종가 → ust10. FRED(DGS10) 대체: 지연 없이 당일 확보.
+    # 미국일자로 옴 → infomax_pull._read_ust10이 '다음 한국거래일'로 as-of 시프트(룩어헤드 방지).
+    ("US10Y",  "IR",  "US10Y",         ["일자", "MID_Close"]),
     # ── MACRO 5종 (ECO, 월별) — infomax_pull이 지수→yoy 계산 + 발표일 배치 ──
     ("M_CPI",  "ECO", "701979",       ["일자", "현재가"]),   # CPI 총지수 → cpi_yoy
     ("M_CORE", "ECO", "701996",       ["일자", "현재가"]),   # 근원 CPI 지수 → core_cpi_yoy
