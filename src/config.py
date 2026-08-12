@@ -34,8 +34,9 @@ COLUMNS = [
     "bank_net_ktb10", "itrust_net_ktb10", "ins_net_ktb10", "irs10y",
     # v2.5 MACRO 축 (인포맥스 ECO, 발표일 배치)
     "cpi_yoy", "core_cpi_yoy", "bei", "exports_yoy", "ip_yoy",
+    "wti",   # WTI 유가 종가(인포맥스 FRN/SPT:CL 현재가). 차장님 지시로 추가. as-of 시프트(미국일→한국).
 ]
-assert len(COLUMNS) == 47, f"컬럼 수 {len(COLUMNS)} != 47"
+assert len(COLUMNS) == 48, f"컬럼 수 {len(COLUMNS)} != 48"
 
 # 수집 대상 필드 = date/note 제외 (ledger에 들어갈 것들)
 DATA_FIELDS = [c for c in COLUMNS if c not in ("date", "note")]
@@ -60,6 +61,7 @@ SOURCE_FIELDS = {
         "irs3y", "irs10y", "ois3y", "kofr",
         "cpi_yoy", "core_cpi_yoy", "bei", "exports_yoy", "ip_yoy",   # MACRO(ECO)
         "ust10",   # 미국채 10년 지표금리(IR/US10Y MID_Close). FRED(DGS10) 대체 — 지연 없음. as-of 시프트.
+        "wti",     # WTI 유가 종가(FRN/SPT:CL 현재가). 미국일→다음 한국거래일 as-of 시프트.
     ],
     "ecos": ["base_rate", "cd91", "y_ktb3", "y_ktb10", "y_ktb30"],
     "fx":   ["usdkrw"],
@@ -215,6 +217,7 @@ RANGE_LIMITS = {
     "y_ktb3": 1.0, "y_ktb10": 1.0, "y_ktb30": 1.0,     # 금리 100bp 초과만
     "base_rate": 1.0, "cd91": 1.0, "kofr": 1.0,
     "irs3y": 1.0, "irs10y": 1.0, "ois3y": 1.0, "ust10": 1.0,
+    "wti": 15.0,    # 유가 $/배럴 일변동 상한(자릿수 오류만 플래그; 실제 급변·2020폭락은 살림)
     # usdkrw는 비율로 따로 처리
 }
 USDKRW_PCT_LIMIT = 0.10   # 10% 초과만 (2008 위기 등 실제 급변은 살림)
