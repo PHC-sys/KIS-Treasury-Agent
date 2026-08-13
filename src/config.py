@@ -149,6 +149,12 @@ CLOSE_HOUR = 16
 # 월간 MACRO 시트엔 N개월(=10년) → yoy 계산 충분. env IMX_DAILY_COUNT로 오버라이드(전체 재백필 시 크게).
 DAILY_REFRESH_COUNT = 120
 
+# 공개소스(ECOS·FX) 증분 겹침일. window_for가 '마지막저장일+1'이 아니라 '−이 일수'부터 재조회.
+# ★필요 이유: last_date_for_source는 소스 필드 전체의 MAX date라, 같은 소스에서 먼저 공표되는
+#   필드(cd91)가 그날을 채우면 늦게 공표되는 필드(y_ktb 채권종가)가 그 날짜에 영구 결번된다.
+#   최근 N일을 매번 다시 긁으면(멱등 upsert) 늦게 나온 값이 다음 실행에 채워짐.
+INCREMENTAL_OVERLAP_DAYS = 7
+
 
 _XKRX = None
 

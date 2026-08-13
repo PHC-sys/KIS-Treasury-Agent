@@ -25,10 +25,14 @@ import sanity
 
 # ── 기간 결정 ────────────────────────────────────────────────────────
 def window_for(conn, source, today):
-    """(start, end). 원장에 해당 소스가 있으면 마지막일+1~오늘, 없으면 백필."""
+    """(start, end). 원장에 해당 소스가 있으면 (마지막일+1 − 겹침일)~오늘, 없으면 백필.
+    ★겹침(INCREMENTAL_OVERLAP_DAYS): last_date_for_source는 소스 필드 전체의 MAX date라,
+    먼저 공표되는 필드(cd91)가 그날을 채우면 늦게 공표되는 필드(y_ktb)가 영구 결번됨.
+    최근 며칠을 매번 재조회(멱등 upsert)해 늦게 나온 값을 다음 실행에 채운다."""
     last = store.last_date_for_source(conn, source)
     if last:
-        start = date.fromisoformat(last) + timedelta(days=1)
+        start = (date.fromisoformat(last) + timedelta(days=1)
+                 - timedelta(days=config.INCREMENTAL_OVERLAP_DAYS))
     else:
         start = config.BACKFILL_START     # 소스가 그 전 데이터 없으면 빈 응답으로 자동 스킵
     return start, today
