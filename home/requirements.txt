@@ -1,0 +1,7 @@
+requests
+pandas
+openpyxl
+exchange_calendars   # XKRX 한국거래소 캘린더 (기준일·완결성 점검)
+pywin32              # 인포맥스 애드인 Excel COM 자동화 (Windows)
+# pykrx  # 파생 OHLCV·투자자수급·국고금리 커버 실패(1.2.8 기준) → KRX MDC 직접 호출로 대체 예정
+# gspread google-auth  # 구글 시트 배달 단계에서 추가
