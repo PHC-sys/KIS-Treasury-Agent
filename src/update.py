@@ -25,16 +25,21 @@ import sanity
 
 # ── 기간 결정 ────────────────────────────────────────────────────────
 def window_for(conn, source, today):
-    """(start, end). 원장에 해당 소스가 있으면 (마지막일+1 − 겹침일)~오늘, 없으면 백필.
-    ★겹침(INCREMENTAL_OVERLAP_DAYS): last_date_for_source는 소스 필드 전체의 MAX date라,
-    먼저 공표되는 필드(cd91)가 그날을 채우면 늦게 공표되는 필드(y_ktb)가 영구 결번됨.
-    최근 며칠을 매번 재조회(멱등 upsert)해 늦게 나온 값을 다음 실행에 채운다."""
+    """(start, end). 원장에 해당 소스가 있으면 마지막일+1~오늘, 없으면 백필.
+
+    ★단, 최근 config.RECHECK_TRADING_DAYS 거래일은 증분창과 무관하게 항상 포함한다.
+      last_date_for_source가 소스 내 '모든 필드의 MAX'라, 한 필드가 먼저 공표되면
+      창이 닫혀 늦게 나오는 필드를 영영 안 긁는 구멍이 생긴다(config 주석 참조).
+      멱등 upsert라 이미 있는 값은 그대로, 빠진 값·정정치만 반영된다."""
     last = store.last_date_for_source(conn, source)
     if last:
-        start = (date.fromisoformat(last) + timedelta(days=1)
-                 - timedelta(days=config.INCREMENTAL_OVERLAP_DAYS))
+        start = date.fromisoformat(last) + timedelta(days=1)
     else:
         start = config.BACKFILL_START     # 소스가 그 전 데이터 없으면 빈 응답으로 자동 스킵
+    sess = config.trading_days(today - timedelta(days=20), today)
+    if sess:
+        n = max(1, config.RECHECK_TRADING_DAYS)
+        start = min(start, sess[-n] if len(sess) >= n else sess[0])
     return start, today
 
 
@@ -185,6 +190,33 @@ def completeness_report(conn, ref):
     return lines
 
 
+# ── 수급 항등식 검증 (차장님 요청 — 적재 정합성 자동검증) ─────────────
+def flow_identity_report(conn, ref, days=10):
+    """국채선물 제로섬 항등식으로 수급 컬럼 정합성 확인.
+      fx+bank+itrust+ins+sec+indiv+etc == 0  (config.FLOW_IDENTITY)
+    최근 `days` 거래일만 검사. 어긋나면 시끄럽게 — 조용히 넘어가지 않는다.
+    반환: (경보 줄 리스트, 검사한 일수)."""
+    from datetime import timedelta
+    sess = [d.isoformat() for d in config.trading_days(ref - timedelta(days=40), ref)]
+    sess = [d for d in sess[-days:] if d >= config.FLOW_IDENTITY_START]
+    if not sess:
+        return [], 0
+    lines, checked = [], 0
+    for tag, fields in config.FLOW_IDENTITY.items():
+        series = {f: store.field_series(conn, f) for f in fields}
+        for d in sess:
+            vals = {f: series[f].get(d) for f in fields}
+            if any(v is None for v in vals.values()):
+                continue          # 그날 수급 자체가 아직 없음(휴장·미공표) → 검증 대상 아님
+            checked += 1
+            s = sum(vals.values())
+            if abs(s) > 1e-6:
+                detail = ", ".join(f"{f.replace('_net_'+tag,'')}={int(v)}"
+                                   for f, v in vals.items())
+                lines.append(f"  ⚠ [수급항등식] {tag} {d} 합={int(s)} (0이어야 함) :: {detail}")
+    return lines, checked
+
+
 # ── 메인 ─────────────────────────────────────────────────────────────
 def main():
     today = config.ref_date()      # 기준일 = 마지막 완료 영업일 (오늘 아님)
@@ -228,14 +260,33 @@ def main():
         total_pass += len(passed)
         total_flag += len(flagged)
         total_drop += len(dropped)
-        added_dates = len({r.date for r in passed})
+        # 재조회 구간이 겹치므로 '이미 있던 값'과 구분해서 보고한다.
+        #  신규 = 원장에 없던 (date,field) / 정정 = 있었지만 값이 달라진 것.
+        #  늦공표가 뒤늦게 메워진 걸 로그에서 바로 볼 수 있어야 한다.
+        fresh = [r for r in passed if r.date not in prev.get(r.field, {})]
+        fixed = [r for r in passed
+                 if r.date in prev.get(r.field, {})
+                 and prev[r.field][r.date] != r.value]
         tags = []
         if flagged:
             tags.append(f"플래그 {len(flagged)}")
         if dropped:
             tags.append(f"격리 {len(dropped)}")
         tail = "  ⚠ " + ", ".join(tags) if tags else "  OK"
-        report.append(f"{source:6}: 최종 {last} → +{added_dates}일 ({len(passed)}값){tail}")
+        if fresh or fixed:
+            bits = []
+            if fresh:
+                bits.append(f"신규 {len(fresh)}값({len({r.date for r in fresh})}일)")
+            if fixed:
+                bits.append(f"정정 {len(fixed)}값")
+            report.append(f"{source:6}: 최종 {last} → " + " / ".join(bits) + tail)
+            for r in sorted(fresh + fixed, key=lambda x: (x.date, x.field))[:12]:
+                was = prev.get(r.field, {}).get(r.date)
+                report.append(f"        {r.date} {r.field} = {r.value}"
+                              + (f"  (이전 {was})" if was is not None else "  (신규)"))
+        else:
+            report.append(f"{source:6}: 최종 {last} → 변동 없음"
+                          f" (최근 {config.RECHECK_TRADING_DAYS}거래일 재확인){tail}")
 
     # 수기 입력 병합 (kr_cds5 등 라이선스로 자동불가)
     n_manual = merge_manual(conn)
@@ -251,7 +302,8 @@ def main():
     print(f"\n=== UPDATE 기준일 {today} (실행 {store.now_iso()[11:16]}) ===")
     for line in report:
         print(line)
-    print(f"[SANITY] 적재 {total_pass} (플래그 {total_flag}) / 격리 {total_drop}")
+    # 재조회 구간이 겹치므로 '검사통과'는 재확인분을 포함한다(실제 변동은 위 소스별 줄 참조).
+    print(f"[SANITY] 검사통과 {total_pass} (플래그 {total_flag}) / 격리 {total_drop}")
     comp = completeness_report(conn, today)
     if comp:
         print("[완결성] 최근 거래일 누락 감지:")
@@ -259,6 +311,13 @@ def main():
             print(line)
     else:
         print("[완결성] 최근 7거래일 핵심소스 이상 없음  OK")
+    flow, n_chk = flow_identity_report(conn, today)
+    if flow:
+        print("[수급항등식] 불일치 감지 — 수급 컬럼 적재 확인 필요:")
+        for line in flow:
+            print(line)
+    else:
+        print(f"[수급항등식] 최근 {n_chk}건 합=0  OK")
     print(f"[EXPORT] {config.OUT_CSV}  {n_rows}행")
     conn.close()
 

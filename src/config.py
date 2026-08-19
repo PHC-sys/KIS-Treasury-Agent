@@ -35,8 +35,29 @@ COLUMNS = [
     # v2.5 MACRO 축 (인포맥스 ECO, 발표일 배치)
     "cpi_yoy", "core_cpi_yoy", "bei", "exports_yoy", "ip_yoy",
     "wti",   # WTI 유가 종가(인포맥스 FRN/SPT:CL 현재가). 차장님 지시로 추가. as-of 시프트(미국일→한국).
+    # ── v2.6 수급 세분화 (차장님 요청) ─────────────────────────────────
+    # 인포맥스 FUT 투자자별 '순매수수량'. 단위=계약, 부호 +매수/−매도 (기존 수급과 동일).
+    #  etc_net = "기타법인·국가 등 나머지 전부의 합" — 차장님 정의 그대로
+    #            = 기타 + 국가/지방 + 연기금 + 종신금.
+    #  → 항등식 fx+bank+itrust+ins+sec+indiv+etc = 0 으로 적재 정합성 매일 자동검증(FLOW_IDENTITY).
+    #  pension_net은 **etc_net의 부분집합**(독립 컬럼 아님). 실측상 etc의 86~88%가 연기금이라,
+    #  '기타법인 흐름'으로 오독되지 않도록 따로 노출한다.
+    #    ※ 8개를 전부 더하면 연기금이 이중계산된다 — 합산할 땐 pension 제외.
+    "sec_net_ktb3", "sec_net_ktb10",
+    "indiv_net_ktb3", "indiv_net_ktb10",
+    "etc_net_ktb3", "etc_net_ktb10",
+    "pension_net_ktb3", "pension_net_ktb10",
+    # ── v2.7 미국채 2Y·10Y OHLC (차장님 요청) ─────────────────────────
+    # 인포맥스 IR/US10Y·US02Y의 MID_Open/High/Low/Close. 단위 %, 소수 그대로.
+    #  ★MID 기준 — 기존 ust10(26년치)이 MID_Close라 시리즈를 통일한다.
+    #    단말 화면(FRN/GVO:TR10Y·GVO:TR02Y '현재가')은 BID이며 MID보다 0.0~0.5bp 높다.
+    #    같은 IR 호출에 BID_*도 있으므로 필요하면 나중에 별도 컬럼으로 추가할 것(기존 시리즈 변경 금지).
+    #  ust10은 기존 컬럼 그대로 두고(=ust10_close 역할) open/high/low만 추가한다.
+    #  as-of 시프트(미국일→다음 한국거래일)는 ust10과 동일하게 적용.
+    "ust10_open", "ust10_high", "ust10_low",
+    "ust2", "ust2_open", "ust2_high", "ust2_low",
 ]
-assert len(COLUMNS) == 48, f"컬럼 수 {len(COLUMNS)} != 48"
+assert len(COLUMNS) == 63, f"컬럼 수 {len(COLUMNS)} != 63"
 
 # 수집 대상 필드 = date/note 제외 (ledger에 들어갈 것들)
 DATA_FIELDS = [c for c in COLUMNS if c not in ("date", "note")]
@@ -62,6 +83,14 @@ SOURCE_FIELDS = {
         "cpi_yoy", "core_cpi_yoy", "bei", "exports_yoy", "ip_yoy",   # MACRO(ECO)
         "ust10",   # 미국채 10년 지표금리(IR/US10Y MID_Close). FRED(DGS10) 대체 — 지연 없음. as-of 시프트.
         "wti",     # WTI 유가 종가(FRN/SPT:CL 현재가). 미국일→다음 한국거래일 as-of 시프트.
+        # v2.6 수급 세분화 (FUT 투자자별 순매수수량)
+        "sec_net_ktb3", "sec_net_ktb10",
+        "indiv_net_ktb3", "indiv_net_ktb10",
+        "etc_net_ktb3", "etc_net_ktb10",
+        "pension_net_ktb3", "pension_net_ktb10",
+        # v2.7 미국채 OHLC (IR/US10Y·US02Y MID_*) — as-of 시프트
+        "ust10_open", "ust10_high", "ust10_low",
+        "ust2", "ust2_open", "ust2_high", "ust2_low",
     ],
     "ecos": ["base_rate", "cd91", "y_ktb3", "y_ktb10", "y_ktb30"],
     "fx":   ["usdkrw"],
@@ -149,11 +178,13 @@ CLOSE_HOUR = 16
 # 월간 MACRO 시트엔 N개월(=10년) → yoy 계산 충분. env IMX_DAILY_COUNT로 오버라이드(전체 재백필 시 크게).
 DAILY_REFRESH_COUNT = 120
 
-# 공개소스(ECOS·FX) 증분 겹침일. window_for가 '마지막저장일+1'이 아니라 '−이 일수'부터 재조회.
-# ★필요 이유: last_date_for_source는 소스 필드 전체의 MAX date라, 같은 소스에서 먼저 공표되는
-#   필드(cd91)가 그날을 채우면 늦게 공표되는 필드(y_ktb 채권종가)가 그 날짜에 영구 결번된다.
-#   최근 N일을 매번 다시 긁으면(멱등 upsert) 늦게 나온 값이 다음 실행에 채워짐.
-INCREMENTAL_OVERLAP_DAYS = 7
+# HTTP 소스(ecos·fx) 재조회 룩백 = 최근 N거래일은 증분창과 무관하게 항상 다시 긁는다.
+# ★왜: last_date_for_source는 그 소스 '모든 필드의 MAX'다. 한 소스 안에서도 공표 시각이
+#   다르면(실측: ECOS는 cd91이 국고금리보다 먼저 뜬다) 먼저 온 필드가 창을 닫아버려
+#   늦게 나온 필드를 영영 안 긁는다 — 조용한 영구 구멍. (2026-08-12 y_ktb3/10/30 실제 발생)
+#   최근 N일 재조회로 늦공표·사후정정을 매 실행마다 흡수한다. upsert가 멱등이라 부작용 없음.
+#   비용: ECOS 필드당 1콜에 며칠치가 같이 오므로 사실상 추가 비용 없음.
+RECHECK_TRADING_DAYS = 3
 
 
 _XKRX = None
@@ -168,17 +199,37 @@ def _xkrx():
     return _XKRX
 
 
+def _weekdays(start, end):
+    """[start, end] 평일(월~금). 캘린더가 커버 못 하는 구간 보충용 — 공휴일 미반영."""
+    out, d = [], start
+    while d <= end:
+        if d.weekday() < 5:
+            out.append(d)
+        d = d + timedelta(days=1)
+    return out
+
+
 def trading_days(start, end):
-    """[start, end] 실제 거래일(공휴일 반영). XKRX 실패 시 평일로 폴백."""
+    """[start, end] 실제 거래일(공휴일 반영). 캘린더 범위 밖 구간만 평일로 보충.
+
+    ★버그 이력(2026-08-18 수정): XKRX는 2006-08-18부터만 제공한다. 예전 구현은
+      sessions_in_range(start, end)를 그대로 호출해서, BACKFILL_START(2000-01-01)로
+      부르면 DateOutOfBounds가 나고 except가 이를 삼켜 **전 구간이 평일 폴백**이 됐다.
+      → 한국 휴장일 286일(2006~2026 실측)을 거래일로 오인. _read_asof(ust10·ust2·wti)와
+        _read_macro가 이 함수를 쓰므로 미국 종가가 한국 휴장일에 갇혀 유실되기도 했다
+        (실측 피해 1일: 2026-05-26, 한국 대체공휴일 = 미국 Memorial Day가 겹친 날).
+      이제 캘린더 하한/상한으로 클램프하고 그 바깥만 평일로 채운다.
+    """
     try:
-        return [s.date() for s in _xkrx().sessions_in_range(str(start), str(end))]
-    except Exception:
-        out, d = [], start
-        while d <= end:
-            if d.weekday() < 5:
-                out.append(d)
-            d = d + timedelta(days=1)
-        return out
+        cal = _xkrx()
+        lo, hi = cal.first_session.date(), cal.last_session.date()
+        s, e = max(start, lo), min(end, hi)
+        sess = [x.date() for x in cal.sessions_in_range(str(s), str(e))] if s <= e else []
+        head = _weekdays(start, min(end, lo - timedelta(days=1))) if start < lo else []
+        tail = _weekdays(max(start, hi + timedelta(days=1)), end) if end > hi else []
+        return head + sess + tail
+    except Exception:          # exchange_calendars 미설치 등 → 전 구간 평일
+        return _weekdays(start, end)
 
 
 def ref_date(now=None):
@@ -209,6 +260,21 @@ def ref_date(now=None):
 # 소스별 '대표 필드' (이게 있으면 그 소스가 그날 값을 준 것). fred(미국캘린더)는 제외.
 KEY_FIELD = {"선물": "ktb3_settle", "금리": "cd91", "환율": "usdkrw", "스왑": "irs3y"}
 
+# ── 수급 항등식 (차장님 요청 — 적재 정합성 자동검증) ────────────────────
+# 국채선물은 제로섬이라 전 투자자 순매수 합 = 0. 인포맥스 분류를 우리 컬럼에 사상하면:
+#   fx(외국인합) + bank + itrust + ins + sec(증권/선물) + indiv(개인) + etc(나머지 전부) = 0
+# ★pension은 etc의 부분집합이므로 여기 넣지 않는다(넣으면 이중계산으로 절대 안 맞음).
+# 실측: KTB10 전 구간(3,889일) 불일치 0 / KTB3는 2004-06-28 이후 5,466일 불일치 0.
+# 그 이전(2001-01-30~2004-06-25)은 인포맥스가 연기금·종신금·국가/지방을 별도 제공하지 않아
+# 원천에서부터 합이 안 맞는다 → 검증 대상에서 제외(데이터는 정상 적재).
+FLOW_IDENTITY = {
+    "ktb3": ["fx_net_ktb3", "bank_net_ktb3", "itrust_net_ktb3", "ins_net_ktb3",
+             "sec_net_ktb3", "indiv_net_ktb3", "etc_net_ktb3"],
+    "ktb10": ["fx_net_ktb10", "bank_net_ktb10", "itrust_net_ktb10", "ins_net_ktb10",
+              "sec_net_ktb10", "indiv_net_ktb10", "etc_net_ktb10"],
+}
+FLOW_IDENTITY_START = "2004-06-28"   # 이 날부터 검증 (그 이전은 원천 미분류)
+
 # 0 처리는 인포맥스 로드단에서: 가격필드(settle/OHLC/basis) 0 = 미기록 → 빈칸,
 # vol/oi/net 0 = 진짜(거래없음/순매수0) → 유지. sanity 격리는 안 씀.
 ZERO_IMPLAUSIBLE = set()
@@ -223,6 +289,8 @@ RANGE_LIMITS = {
     "y_ktb3": 1.0, "y_ktb10": 1.0, "y_ktb30": 1.0,     # 금리 100bp 초과만
     "base_rate": 1.0, "cd91": 1.0, "kofr": 1.0,
     "irs3y": 1.0, "irs10y": 1.0, "ois3y": 1.0, "ust10": 1.0,
+    "ust10_open": 1.0, "ust10_high": 1.0, "ust10_low": 1.0,
+    "ust2": 1.0, "ust2_open": 1.0, "ust2_high": 1.0, "ust2_low": 1.0,
     "wti": 15.0,    # 유가 $/배럴 일변동 상한(자릿수 오류만 플래그; 실제 급변·2020폭락은 살림)
     # usdkrw는 비율로 따로 처리
 }
@@ -243,4 +311,6 @@ NONNEG_INT_FIELDS = {"ktb3_vol", "ktb10_vol", "ktb3_oi", "ktb10_oi"}
 POSITIVE_FIELDS = {
     "y_ktb3", "y_ktb10", "y_ktb30", "base_rate", "cd91", "kofr",
     "irs3y", "irs10y", "ois3y", "ust10", "usdkrw",
+    "ust10_open", "ust10_high", "ust10_low",
+    "ust2", "ust2_open", "ust2_high", "ust2_low",
 }

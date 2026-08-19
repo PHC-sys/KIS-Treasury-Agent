@@ -63,6 +63,13 @@ def _fut_fields(suf):
         f"bank_net_ktb{suf}": ("net", "은행매수수량", "은행매도수량"),
         f"itrust_net_ktb{suf}": ("net", "투신매수수량", "투신매도수량"),
         f"ins_net_ktb{suf}": ("net", "보험매수수량", "보험매도수량"),
+        # v2.6 — 인포맥스가 순매수수량을 직접 주므로 그대로 받는다.
+        f"sec_net_ktb{suf}": "증권/선물순매수수량",
+        f"indiv_net_ktb{suf}": "개인순매수수량",
+        f"pension_net_ktb{suf}": "연기금순매수수량",
+        # etc = "나머지 전부의 합"(차장님 정의). 초기 구간엔 없는 항목이 있어 빈칸=0으로 더한다.
+        f"etc_net_ktb{suf}": ("sum", "기타순매수수량", "국가/지방순매수수량",
+                              "연기금순매수수량", "종신금순매수수량"),
     }
 
 
@@ -103,7 +110,21 @@ def _read_one(spec):
     header = [str(c).strip() if c else "" for c in rows[hi]]
     dcol = header.index(spec["header_text"])
 
+    # ★워크북에 없는 항목은 None으로 돌려준다(예외 아님).
+    #  회사 zip이 확장 전 워크북으로 덮어쓰면 header.index가 ValueError를 던지는데,
+    #  load()는 FileNotFoundError/KeyError만 잡아서 시트 전체 적재가 통째로 죽었다
+    #  (신규 컬럼만 비는 게 아니라 그날 선물 데이터가 전부 안 들어옴).
+    #  → 없는 항목만 조용히 빠지고 나머지는 정상 적재. 단 무엇이 빠졌는지는 아래서 경고한다.
+    missing = sorted({n for f in spec["fields"].values()
+                      for n in ((f[1:] if isinstance(f, tuple) else (f,)))
+                      if n not in header})
+    if missing:
+        print(f"  ⚠ [{spec['sheet']}] 워크북에 없는 항목 {len(missing)}개 → 해당 필드 건너뜀: "
+              f"{', '.join(missing)}  (build_infomax.py로 워크북 갱신 필요)")
+
     def cell(r, name):
+        if name not in header:
+            return None
         c = header.index(name)
         return r[c] if c < len(r) else None
 
@@ -118,6 +139,13 @@ def _read_one(spec):
                 if buy in (None, "") or sell in (None, ""):
                     continue
                 v = float(buy) - float(sell)
+            elif isinstance(item, tuple) and item[0] == "sum":  # 여러 항목 합
+                # 빈칸 = 그 분류가 아직 없던 시기 → 0으로 취급. 단 전부 비면 그 날은 값 없음.
+                got = [cell(r, name) for name in item[1:]]
+                got = [g for g in got if g not in (None, "")]
+                if not got:
+                    continue
+                v = float(sum(float(g) for g in got))
             else:                                              # 직접 열
                 raw = cell(r, item)
                 if raw in (None, ""):
@@ -194,15 +222,23 @@ def _read_macro():
 
 
 def _asof_records(us_rows, kdays, field):
-    """미국일자 시계열 → 한국거래일로 as-of 배정 (ust10·wti 공용).
+    """미국일자 시계열 → 한국거래일로 as-of 배정 (ust10·ust2·wti 공용).
     us_rows: [(미국일 'YYYY-MM-DD', 값), ...]. kdays: 정렬된 한국거래일 문자열.
     ★as-of(룩어헤드 방지): 미국일 d의 종가는 한국 다음거래일 새벽 확정 → d를 '첫 한국거래일 > d'에 배정.
     갭>10일이면 범위밖(예: 우리 데이터 이전 과거일)으로 스킵. 0/결측 스킵.
+
+    ★★한 한국일에 미국일이 여러 개 몰리면(한국 휴장 연휴) **가장 최신 미국일**을 채택한다.
+      한국 T 개장 시점에 알 수 있는 건 '직전 미국 종가'이므로 최신이 맞다.
+      버그 이력(2026-08-18 수정): 예전엔 그냥 append 했는데, store.upsert가 executemany라
+      '나중 실행'이 이긴다. 워크북은 sort=D(내림차순)이라 **오래된 미국일이 최종값**이 됐다.
+      (폐기된 fred.py는 CSV가 오름차순이라 우연히 맞았고, 인포맥스로 옮기며 전제가 깨졌다.)
+      실측 오류: 한국 2026-03-03=미국 02-27(3.942, 정답 03-02 4.035) 등.
+      → 입력 순서와 무관하게 동작하도록 한국일별 max(미국일)로 확정한다.
     반환 Record(date=한국일, field, value, as_of=미국일)."""
     import bisect
     from datetime import date as _date
     from collectors.base import Record
-    out = []
+    best = {}                                       # 한국일 → (미국일, 값)
     for d, v in us_rows:
         if not d or v in (None, ""):
             continue
@@ -215,13 +251,20 @@ def _asof_records(us_rows, kdays, field):
         kd = kdays[i]
         if (_date.fromisoformat(kd) - _date.fromisoformat(d)).days > 10:
             continue                                # 큰 갭(범위밖 과거일이 첫 한국일에 몰림) → 스킵
-        out.append(Record(date=kd, field=field, value=v, as_of=d))
-    return out
+        if kd not in best or d > best[kd][0]:       # 최신 미국일 우선
+            best[kd] = (d, v)
+    return [Record(date=kd, field=field, value=v, as_of=d)
+            for kd, (d, v) in sorted(best.items())]
 
 
-def _read_asof(sheet_name, value_header, field):
-    """워크북 해외 시트(미국일자 + value_header 열) → as-of 시프트 → field Records (ust10·wti 공용).
-    (일별 refresh가 최근 N일치 시트를 채우면 이게 읽어 최근분 유지. 전이력은 별도 백필.)"""
+def _read_asof(sheet_name, fields):
+    """워크북 해외 시트(미국일자 + 항목열들) → as-of 시프트 → Records.
+
+    fields: {우리필드: 워크북 항목헤더}  — 한 시트에서 여러 항목을 한 번에 읽는다.
+            (예 US10Y: {"ust10":"MID_Close", "ust10_open":"MID_Open", ...})
+    워크북/거래일 목록은 시트당 1회만 로드한다.
+    없는 항목은 건너뛰고 경고 — 확장 전 워크북으로 덮어써도 죽지 않게.
+    """
     import openpyxl
     import config
     if not Path(IMX_FILE).exists():
@@ -236,27 +279,51 @@ def _read_asof(sheet_name, value_header, field):
     if hi is None:
         return []
     hdr = [str(c).strip() if c else "" for c in rows[hi]]
-    if value_header not in hdr:
-        return []
-    di, vi = hdr.index("일자"), hdr.index(value_header)
-    us_rows = []
-    for r in rows[hi + 1:]:
-        d = _to_date(r[di]) if di < len(r) and r[di] is not None else None
-        v = r[vi] if vi < len(r) else None
-        if d:
-            us_rows.append((d, v))
-    kdays = [k.isoformat() for k in config.trading_days(config.BACKFILL_START, config.ref_date())]
-    return _asof_records(us_rows, kdays, field)
+    di = hdr.index("일자")
+    missing = [h for h in fields.values() if h not in hdr]
+    if missing:
+        print(f"  ⚠ [{sheet_name}] 워크북에 없는 항목 → 해당 필드 건너뜀: {', '.join(missing)}")
+    kdays = [k.isoformat() for k in
+             config.trading_days(config.BACKFILL_START, config.ref_date())]
+
+    out = []
+    for field, value_header in fields.items():
+        if value_header not in hdr:
+            continue
+        vi = hdr.index(value_header)
+        us_rows = []
+        for r in rows[hi + 1:]:
+            d = _to_date(r[di]) if di < len(r) and r[di] is not None else None
+            v = r[vi] if vi < len(r) else None
+            if d:
+                us_rows.append((d, v))
+        out += _asof_records(us_rows, kdays, field)
+    return out
 
 
 def _read_ust10():
-    """US10Y 시트 → ust10 (미국채10년 지표금리 MID_Close)."""
-    return _read_asof("US10Y", "MID_Close", "ust10")
+    """US10Y 시트 → 미국채10년 MID OHLC. ust10 = MID_Close(기존 컬럼 유지)."""
+    return _read_asof("US10Y", {
+        "ust10":      "MID_Close",
+        "ust10_open": "MID_Open",
+        "ust10_high": "MID_High",
+        "ust10_low":  "MID_Low",
+    })
+
+
+def _read_ust2():
+    """US02Y 시트 → 미국채2년 MID OHLC. (만기 2자리 제로패딩: US02Y — US2Y는 없음)"""
+    return _read_asof("US02Y", {
+        "ust2":      "MID_Close",
+        "ust2_open": "MID_Open",
+        "ust2_high": "MID_High",
+        "ust2_low":  "MID_Low",
+    })
 
 
 def _read_wti():
     """WTI 시트 → wti (WTI 유가 종가=현재가)."""
-    return _read_asof("WTI", "현재가", "wti")
+    return _read_asof("WTI", {"wti": "현재가"})
 
 
 def load(path=None):
@@ -277,6 +344,7 @@ def load(path=None):
             print(f"  (건너뜀: 시트 없음 '{spec['sheet']}' — build_infomax.py 재실행 필요)")
     recs += _read_macro()                         # MACRO 5종 (지수→yoy → 발표일 배치 → ffill)
     recs += _read_ust10()                         # 미국채10년(IR/US10Y MID_Close) → as-of 시프트
+    recs += _read_ust2()                          # 미국채2년(IR/US02Y MID OHLC) → as-of 시프트
     recs += _read_wti()                           # WTI 유가(FRN/SPT:CL 현재가) → as-of 시프트
     ref = config.ref_date().isoformat()          # 미확정 당일 제외 (정산가 0 등)
     recs = [r for r in recs if r.date <= ref]
