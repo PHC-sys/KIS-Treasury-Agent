@@ -44,6 +44,9 @@ SHEETS = [
     ("US02Y",  "IR",  "US02Y",  ["일자", "MID_Open", "MID_High", "MID_Low", "MID_Close"]),
     # WTI 유가 종가(현재가) → wti. 미국일자 → _read_wti가 다음 한국거래일로 as-of 시프트.
     ("WTI",    "FRN", "SPT:CL",         ["일자", "현재가"]),
+    # USDKRW 정규장(09:00~15:30) OHLC → usdkrw_open/high/low/close. 한국날짜(시프트 없음).
+    # ★_EXT(연장/야간) 아니라 정규 USDSP_SMBCC. close=현재가(15:30 마감). LOAD_SPEC이 매핑.
+    ("USDKRW", "FX",  "USDSP_SMBCC",    ["일자", "시가", "고가", "저가", "현재가"]),
     # ── MACRO 5종 (ECO, 월별) — infomax_pull이 지수→yoy 계산 + 발표일 배치 ──
     ("M_CPI",  "ECO", "701979",       ["일자", "현재가"]),   # CPI 총지수 → cpi_yoy
     ("M_CORE", "ECO", "701996",       ["일자", "현재가"]),   # 근원 CPI 지수 → core_cpi_yoy

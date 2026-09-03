@@ -56,8 +56,14 @@ COLUMNS = [
     #  as-of 시프트(미국일→다음 한국거래일)는 ust10과 동일하게 적용.
     "ust10_open", "ust10_high", "ust10_low",
     "ust2", "ust2_open", "ust2_high", "ust2_low",
+    # ── v2.8 USDKRW 정규장 OHLC (차장님 요청) ─────────────────────────
+    # 인포맥스 FX/USDSP_SMBCC(정규 09:00~15:30) 시가/고가/저가/현재가. 한국거래라 as-of 시프트 없음.
+    #  기존 usdkrw는 그대로 유지(=ECOS 매매기준율=당일 최초고시). 이건 시장 OHLC.
+    #  close = 현재가(15:30 마감). 파이프라인이 채권종가(3:30) 후 실행이라 당일 반영됨.
+    #  ★_EXT(연장/야간)가 아니라 정규 USDSP_SMBCC 사용.
+    "usdkrw_open", "usdkrw_high", "usdkrw_low", "usdkrw_close",
 ]
-assert len(COLUMNS) == 63, f"컬럼 수 {len(COLUMNS)} != 63"
+assert len(COLUMNS) == 67, f"컬럼 수 {len(COLUMNS)} != 67"
 
 # 수집 대상 필드 = date/note 제외 (ledger에 들어갈 것들)
 DATA_FIELDS = [c for c in COLUMNS if c not in ("date", "note")]
@@ -91,6 +97,8 @@ SOURCE_FIELDS = {
         # v2.7 미국채 OHLC (IR/US10Y·US02Y MID_*) — as-of 시프트
         "ust10_open", "ust10_high", "ust10_low",
         "ust2", "ust2_open", "ust2_high", "ust2_low",
+        # v2.8 USDKRW 정규장 OHLC (FX/USDSP_SMBCC 시/고/저/현재가) — 한국날짜(시프트 없음)
+        "usdkrw_open", "usdkrw_high", "usdkrw_low", "usdkrw_close",
     ],
     "ecos": ["base_rate", "cd91", "y_ktb3", "y_ktb10", "y_ktb30"],
     "fx":   ["usdkrw"],
@@ -313,4 +321,5 @@ POSITIVE_FIELDS = {
     "irs3y", "irs10y", "ois3y", "ust10", "usdkrw",
     "ust10_open", "ust10_high", "ust10_low",
     "ust2", "ust2_open", "ust2_high", "ust2_low",
+    "usdkrw_open", "usdkrw_high", "usdkrw_low", "usdkrw_close",   # FX 환율 >0
 }

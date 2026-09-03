@@ -40,7 +40,7 @@ def check_record(rec, prev_value):
     #  이유: 실제 급변(위기·금리인하)·연결선물 롤갭은 진짜 값이라 버리면 안 됨.
     #  드롭하면 다음날이 옛 기준과 비교돼 연쇄격리(cascade)됨. 그로스 오류만 걸러 플래그.
     if prev_value is not None:
-        if f == "usdkrw":
+        if f.startswith("usdkrw"):        # usdkrw(매매기준율) + usdkrw_open/high/low/close(OHLC)
             if prev_value and abs(v - prev_value) / abs(prev_value) > config.USDKRW_PCT_LIMIT:
                 return f"jump_pct({(v-prev_value)/prev_value:.3%})", False
         elif f in config.RANGE_LIMITS:

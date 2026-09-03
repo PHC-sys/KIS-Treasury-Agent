@@ -80,6 +80,10 @@ LOAD_SPEC = [
     {"sheet": "IRS10Y", "header_text": "일자", "fields": {"irs10y": "MID종가"}},
     {"sheet": "OIS3Y",  "header_text": "일자", "fields": {"ois3y": "MID종가"}},
     {"sheet": "KOFR",   "header_text": "일자", "fields": {"kofr": "현재가"}},  # ECO/785831 (ECOS보다 신선)
+    # USDKRW 정규장(FX/USDSP_SMBCC) OHLC — 한국날짜라 시프트 없이 그대로 매핑. close=현재가.
+    {"sheet": "USDKRW", "header_text": "일자",
+     "fields": {"usdkrw_open": "시가", "usdkrw_high": "고가",
+                "usdkrw_low": "저가", "usdkrw_close": "현재가"}},
 ]
 for _s in LOAD_SPEC:            # 전부 같은 통합 파일
     _s["file"] = IMX_FILE
@@ -154,7 +158,7 @@ def _read_one(spec):
             # 가격필드(settle/OHLC/basis) 정확히 0 = 미기록 → 빈칸(0=진짜 규칙).
             # vol/oi/net의 0은 진짜(거래없음/순매수0)라 유지.
             if v == 0 and our_field.endswith(
-                    ("_settle", "_open", "_high", "_low", "_theo_basis")):
+                    ("_settle", "_open", "_high", "_low", "_close", "_theo_basis")):
                 continue
             recs.append(Record(date=d, field=our_field, value=v, as_of=d))
     return recs
