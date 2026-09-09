@@ -126,8 +126,10 @@ def fmt(field, v):
 
 
 def is_trading_day(fields_present):
-    """거래일 = KTB 선물이 거래된 날(선물 필드가 하나라도 있는 날)."""
-    return bool(set(fields_present) & config.TRADING_ANCHOR_FIELDS)
+    """행을 낼 거래일 = KTB 선물 OR 미국물(as-of)이 하나라도 있는 날.
+    미국물만 채워진 라이브 아침 행(선물 마감 전)도 CSV/Supabase에 나가야 한다.
+    (과거엔 미국물 날짜에 항상 선물도 있어 실제 추가분은 오늘 아침 행 하나뿐.)"""
+    return bool(set(fields_present) & config.EXPORT_ANCHOR_FIELDS)
 
 
 def export_csv(conn):

@@ -287,8 +287,12 @@ def _read_asof(sheet_name, fields):
     missing = [h for h in fields.values() if h not in hdr]
     if missing:
         print(f"  ⚠ [{sheet_name}] 워크북에 없는 항목 → 해당 필드 건너뜀: {', '.join(missing)}")
+    # ★as-of 시프트 목표일 확보: 미국물은 '미국일+1 한국거래일'에 배정되므로, kdays 끝을
+    #  us_ref_date(아침이면 오늘)까지 넓혀야 미국 전일마감이 '오늘 한국거래일'에 배정된다.
+    #  ref_date(16시 게이트)로 끊으면 목표 한국일이 목록에 없어 _asof_records가 통째 드롭됨(버그 수정).
+    #  오늘 형성 중인 미국 당일봉은 한국 '내일'로 배정 → kdays 밖이라 자동 스킵(잠정치 미적재).
     kdays = [k.isoformat() for k in
-             config.trading_days(config.BACKFILL_START, config.ref_date())]
+             config.trading_days(config.BACKFILL_START, config.us_ref_date())]
 
     out = []
     for field, value_header in fields.items():
@@ -350,8 +354,14 @@ def load(path=None):
     recs += _read_ust10()                         # 미국채10년(IR/US10Y MID_Close) → as-of 시프트
     recs += _read_ust2()                          # 미국채2년(IR/US02Y MID OHLC) → as-of 시프트
     recs += _read_wti()                           # WTI 유가(FRN/SPT:CL 현재가) → as-of 시프트
-    ref = config.ref_date().isoformat()          # 미확정 당일 제외 (정산가 0 등)
-    recs = [r for r in recs if r.date <= ref]
+    # 당일 게이트 — 필드별로 다르게 적용:
+    #  한국물(선물·환율OHLC): ref_date (16시 게이트). 정산가 등 15:30 전엔 미확정 → 제외.
+    #  미국물(ASOF_EARLY_FIELDS): us_ref_date (아침 게이트). 미국 전일마감은 06:00 확정이라
+    #    오늘 행에 아침 조기반영해도 룩어헤드 없음(미국일 종가를 한국 개장 전에 앎).
+    ref = config.ref_date().isoformat()          # 한국물: 미확정 당일 제외 (정산가 0 등)
+    us_ref = config.us_ref_date().isoformat()    # 미국물: 06시 확정분 오늘 행 조기반영
+    recs = [r for r in recs
+            if r.date <= (us_ref if r.field in config.ASOF_EARLY_FIELDS else ref)]
 
     conn = store.connect()
     store.init_db(conn)

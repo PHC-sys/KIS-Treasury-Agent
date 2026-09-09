@@ -130,6 +130,21 @@ TRADING_ANCHOR_FIELDS = {
     "ktb10_open", "ktb10_high", "ktb10_low",
 }
 
+# 미국물(as-of 시프트) 필드 = 미국 전일 정규장 마감. 한국시간 06:00경 이미 확정된다.
+#  → 한국물 16시 게이트(CLOSE_HOUR)와 무관하게 '오늘 거래일' 행에 아침 조기반영해도 룩어헤드 없음.
+#    (미국일 종가를 다음 한국거래일 개장 전에 아는 것이므로 정당한 피처.)
+#  usdkrw OHLC는 한국거래(시프트 없음)라 여기 넣지 않는다 — 15:30 마감이라 16시 게이트 유지.
+ASOF_EARLY_FIELDS = {
+    "ust10", "ust10_open", "ust10_high", "ust10_low",
+    "ust2", "ust2_open", "ust2_high", "ust2_low",
+    "wti",
+}
+
+# CSV/Supabase에 '행을 낼지' 판정하는 앵커 = 한국선물 OR 미국물.
+#  아침 조기반영으로 미국물만 채워진 당일 행도 내보내야 Supabase까지 도달한다.
+#  (과거 미국물 날짜엔 항상 선물도 있어, 실제로 새로 추가되는 건 라이브 아침 행 하나뿐.)
+EXPORT_ANCHOR_FIELDS = TRADING_ANCHOR_FIELDS | ASOF_EARLY_FIELDS
+
 # 모든 수집필드가 정확히 한 소스에 매핑되는지 검증(파생 제외)
 _owned = [f for fs in SOURCE_FIELDS.values() for f in fs]
 _expected = [f for f in DATA_FIELDS if f not in DERIVED_FIELDS]
@@ -181,6 +196,10 @@ BACKFILL_START = _date(2000, 1, 1)   # 가용 최대(3년선물·국고금리 20
 # 선물 마감 15:45 직후(16시)로 낮춤 → 마감 나오면 즉시 당일 채우고, 늦는 필드(ECOS 등)는
 # 이후 실행에서 idempotent 보강(progressive fill). 15:45 이전엔 당일 미포함(장중 현재가≠종가).
 CLOSE_HOUR = 16
+# 미국물(ASOF_EARLY_FIELDS) 아침 조기반영 임계시각. 미국 정규장 마감(≈한국 06:00) 이후면
+#  '오늘' 거래일 행에 미국 전일 종가를 반영한다. 마감 직후 인포맥스 daily 확정 여유로 07시로 둔다.
+#  이 시각 이전(새벽)에 돌리면 직전 거래일까지만 — us_ref_date()가 판정.
+US_MORNING_HOUR = 7
 # 일별 새로고침 조회건수. IMDH는 count 기반(sort=D=최신순)이라 최근 N거래일만 재조회 = 증분.
 # 9000(≈전체 26년) 재계산이 아침 COM busy(RPC_E_CALL_REJECTED) 원인이었음 → 최근분만.
 # 월간 MACRO 시트엔 N개월(=10년) → yoy 계산 충분. env IMX_DAILY_COUNT로 오버라이드(전체 재백필 시 크게).
@@ -258,6 +277,31 @@ def ref_date(now=None):
     except Exception:                          # 폴백: 평일 기준
         d = today
         if not (d.weekday() < 5 and now.hour >= CLOSE_HOUR):
+            d = d - timedelta(days=1)
+        while d.weekday() >= 5:
+            d = d - timedelta(days=1)
+        return d
+
+
+def us_ref_date(now=None):
+    """미국물(ASOF_EARLY_FIELDS) 조기반영 기준일 = 미국 전일마감을 배정할 수 있는
+    마지막 한국거래일. ref_date()와 구조는 같되 '오늘'을 아침(US_MORNING_HOUR 이후)에도
+    허용하는 점만 다르다 — 미국 정규장 마감은 한국 06:00경 이미 확정이라 룩어헤드가 없다.
+    - 오늘이 거래일이고 US_MORNING_HOUR 이후 → 당일 (아침 run.bat로 미국 전일종가 즉시 반영)
+    - 새벽(마감 전)·주말·공휴일 → 직전 거래일"""
+    now = now or datetime.now()
+    today = now.date()
+    try:
+        sess = trading_days(today - timedelta(days=20), today)
+        if not sess:
+            raise ValueError("no sessions")
+        last = sess[-1]                       # today 이하 마지막 거래일
+        if last == today and now.hour < US_MORNING_HOUR:
+            return sess[-2] if len(sess) >= 2 else last
+        return last
+    except Exception:                          # 폴백: 평일 기준
+        d = today
+        if not (d.weekday() < 5 and now.hour >= US_MORNING_HOUR):
             d = d - timedelta(days=1)
         while d.weekday() >= 5:
             d = d - timedelta(days=1)
