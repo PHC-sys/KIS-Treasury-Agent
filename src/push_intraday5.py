@@ -28,6 +28,11 @@ TABLES = {
         "symbols": ["US02Y", "US10Y"],
         "cols": ["symbol", "ts", "open", "high", "low", "close"],
     },
+    "fx_5min": {
+        "src": "fx_bars",
+        "symbols": ["USDKRW"],
+        "cols": ["symbol", "ts", "open", "high", "low", "close"],
+    },
 }
 
 
