@@ -56,7 +56,7 @@ def _ensure_table(cur, table, cols):
     cur.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
 
 
-def _push_table(pg, lite, table, spec):
+def _push_table(pg, lite, table, spec, full=False):
     cur = pg.cursor()
     _ensure_table(cur, table, spec["cols"])
     pg.commit()
@@ -69,6 +69,13 @@ def _push_table(pg, lite, table, spec):
         cur.execute(f"SELECT to_char(MAX(ts),'YYYY-MM-DD HH24:MI:SS') FROM {table} WHERE symbol=%s",
                     (sym,))
         maxts = cur.fetchone()[0]                     # None이면 전량
+        # ★full=True면 증분창을 무시하고 전량 재동기화.
+        #  증분(ts > maxts)은 '과거 구간에 나중에 끼워 넣은 봉'을 영구히 놓친다.
+        #  실제 사고: INTRADAY_SESSION 하한을 09:00→08:45로 고치고 재백필해 08:50·08:55
+        #  2봉/일(231일×2종목=462봉)을 새로 채웠는데, 전부 maxts보다 과거라 +0행이 됐다.
+        #  세션·항목 변경이나 과거 백필 뒤에는 반드시 --full로 밀어야 한다. upsert라 안전.
+        if full:
+            maxts = None
         q = f"SELECT {collist} FROM {spec['src']} WHERE symbol=?"
         args = [sym]
         if maxts:
@@ -84,6 +91,9 @@ def _push_table(pg, lite, table, spec):
     return total
 
 
+FULL = False      # --full 로 켜짐 (전량 재동기화)
+
+
 def main():
     url = os.environ.get("SUPABASE_DB_URL")
     if not url:
@@ -93,7 +103,7 @@ def main():
     try:
         for table, spec in TABLES.items():
             print(f"  ▶ push {table} ← {spec['src']} {spec['symbols']}")
-            _push_table(pg, lite, table, spec)
+            _push_table(pg, lite, table, spec, full=FULL)
         # 최종 커버리지
         cur = pg.cursor()
         for table in TABLES:
@@ -106,4 +116,8 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys as _sys
+    if "--full" in _sys.argv:
+        FULL = True
+        print("  [MODE] --full : 증분창 무시, 전량 재동기화")
     main()
