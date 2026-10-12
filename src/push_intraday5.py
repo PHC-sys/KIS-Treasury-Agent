@@ -21,7 +21,10 @@ TABLES = {
     "ktb_5min": {
         "src": "bars",
         "symbols": ["C65", "C67"],
-        "cols": ["symbol", "ts", "open", "high", "low", "close", "volume", "oi"],
+        # fgn_net_amt/qty = 외국인 순매수 금액/수량(장중 누적). 당일만 수집 가능해 과거는 NULL,
+        # 오후 run의 intraday5_fgn이 당일분을 bars에 채워 여기로 함께 올라간다(intraday5_fgn.py 참조).
+        "cols": ["symbol", "ts", "open", "high", "low", "close", "volume", "oi",
+                 "fgn_net_amt", "fgn_net_qty"],
     },
     "ust_5min": {
         "src": "ust_bars",
