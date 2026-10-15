@@ -47,6 +47,13 @@ SHEETS = [
     # USDKRW 정규장(09:00~15:30) OHLC → usdkrw_open/high/low/close. 한국날짜(시프트 없음).
     # ★_EXT(연장/야간) 아니라 정규 USDSP_SMBCC. close=현재가(15:30 마감). LOAD_SPEC이 매핑.
     ("USDKRW", "FX",  "USDSP_SMBCC",    ["일자", "시가", "고가", "저가", "현재가"]),
+    # 주가지수 종가 4종.
+    #  코스피(IDX/KGG01P)는 한국 지수 → 시프트 없음(LOAD_SPEC이 한국날짜 그대로 매핑).
+    #  S&P500·나스닥종합·VIX(FRN)는 미국 지수 → _read_spx/_nasdaq/_vix가 WTI처럼 as-of 시프트.
+    ("KOSPI",  "IDX", "KGG01P",   ["일자", "현재가"]),
+    ("SPX",    "FRN", "SPI:SPX",  ["일자", "현재가"]),
+    ("NASDAQ", "FRN", "NAS:IXIC", ["일자", "현재가"]),
+    ("VIX",    "FRN", "CBI:VIX",  ["일자", "현재가"]),
     # ── MACRO 5종 (ECO, 월별) — infomax_pull이 지수→yoy 계산 + 발표일 배치 ──
     ("M_CPI",  "ECO", "701979",       ["일자", "현재가"]),   # CPI 총지수 → cpi_yoy
     ("M_CORE", "ECO", "701996",       ["일자", "현재가"]),   # 근원 CPI 지수 → core_cpi_yoy
@@ -126,12 +133,18 @@ def add_missing():
     app.DisplayAlerts = False
     if started:
         app.Visible = False
+        app.Workbooks.Add()          # ★계산모드 고정용 빈 워크북(0개면 Calculation 설정 안 먹음)
+    try:
+        app.Calculation = -4135      # xlCalculationManual — Open 시 26년 IMDH 자동재계산→RPC거부 방지
+    except Exception:
+        pass
     infomax_pull._register_addin(app)
     ref = dt.datetime.combine(config.ref_date(), dt.time())
     start = dt.datetime(2000, 1, 1)
-    wb = app.Workbooks.Open(OUT)
+    wb = infomax_pull._com_retry(lambda: app.Workbooks.Open(OUT))
     try:
-        existing = {wb.Worksheets(i + 1).Name for i in range(wb.Worksheets.Count)}
+        cnt = infomax_pull._com_retry(lambda: wb.Worksheets.Count)
+        existing = {wb.Worksheets(i + 1).Name for i in range(cnt)}
         added = []
         for name, mkt, sym, items in SHEETS:
             if name in existing:

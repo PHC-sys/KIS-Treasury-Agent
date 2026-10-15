@@ -84,6 +84,8 @@ LOAD_SPEC = [
     {"sheet": "USDKRW", "header_text": "일자",
      "fields": {"usdkrw_open": "시가", "usdkrw_high": "고가",
                 "usdkrw_low": "저가", "usdkrw_close": "현재가"}},
+    # 코스피 종합(IDX/KGG01P) — 한국 지수라 한국날짜 그대로(시프트 없음). close=현재가.
+    {"sheet": "KOSPI", "header_text": "일자", "fields": {"kospi": "현재가"}},
 ]
 for _s in LOAD_SPEC:            # 전부 같은 통합 파일
     _s["file"] = IMX_FILE
@@ -334,6 +336,15 @@ def _read_wti():
     return _read_asof("WTI", {"wti": "현재가"})
 
 
+def _read_us_indices():
+    """S&P500·나스닥종합·VIX (FRN 미국 지수) → wti와 동일 as-of 시프트(미국일→다음 한국거래일)."""
+    out = []
+    out += _read_asof("SPX",    {"spx": "현재가"})
+    out += _read_asof("NASDAQ", {"nasdaq": "현재가"})
+    out += _read_asof("VIX",    {"vix": "현재가"})
+    return out
+
+
 def load(path=None):
     """LOAD_SPEC의 모든 엑셀을 읽어 sanity → ledger 적재(source='infomax')
     → 파생(fx_cum·roll_flag) 재계산 → CSV export. update.py와 동일 경로."""
@@ -354,6 +365,7 @@ def load(path=None):
     recs += _read_ust10()                         # 미국채10년(IR/US10Y MID_Close) → as-of 시프트
     recs += _read_ust2()                          # 미국채2년(IR/US02Y MID OHLC) → as-of 시프트
     recs += _read_wti()                           # WTI 유가(FRN/SPT:CL 현재가) → as-of 시프트
+    recs += _read_us_indices()                    # S&P·나스닥·VIX(FRN) → as-of 시프트. 코스피는 LOAD_SPEC(한국)
     # 당일 게이트 — 필드별로 다르게 적용:
     #  한국물(선물·환율OHLC): ref_date (16시 게이트). 정산가 등 15:30 전엔 미확정 → 제외.
     #  미국물(ASOF_EARLY_FIELDS): us_ref_date (아침 게이트). 미국 전일마감은 06:00 확정이라

@@ -62,8 +62,13 @@ COLUMNS = [
     #  close = 현재가(15:30 마감). 파이프라인이 채권종가(3:30) 후 실행이라 당일 반영됨.
     #  ★_EXT(연장/야간)가 아니라 정규 USDSP_SMBCC 사용.
     "usdkrw_open", "usdkrw_high", "usdkrw_low", "usdkrw_close",
+    # ── 주가지수 4종 종가 (차장님 요청) ───────────────────────────────
+    #  kospi = 코스피 종합(IDX/KGG01P, 한국 지수 → as-of 시프트 없음, 당일 15:30 종가).
+    #  spx/nasdaq/vix = S&P500(FRN/SPI:SPX)·나스닥종합(FRN/NAS:IXIC)·VIX(FRN/CBI:VIX).
+    #    미국 지수라 미국일자로 옴 → WTI와 동일하게 as-of 시프트(미국일→다음 한국거래일).
+    "kospi", "spx", "nasdaq", "vix",
 ]
-assert len(COLUMNS) == 67, f"컬럼 수 {len(COLUMNS)} != 67"
+assert len(COLUMNS) == 71, f"컬럼 수 {len(COLUMNS)} != 71"
 
 # 수집 대상 필드 = date/note 제외 (ledger에 들어갈 것들)
 DATA_FIELDS = [c for c in COLUMNS if c not in ("date", "note")]
@@ -99,6 +104,8 @@ SOURCE_FIELDS = {
         "ust2", "ust2_open", "ust2_high", "ust2_low",
         # v2.8 USDKRW 정규장 OHLC (FX/USDSP_SMBCC 시/고/저/현재가) — 한국날짜(시프트 없음)
         "usdkrw_open", "usdkrw_high", "usdkrw_low", "usdkrw_close",
+        # 주가지수 종가: kospi(IDX/KGG01P 한국·시프트없음) / spx·nasdaq·vix(FRN 미국·as-of 시프트)
+        "kospi", "spx", "nasdaq", "vix",
     ],
     "ecos": ["base_rate", "cd91", "y_ktb3", "y_ktb10", "y_ktb30"],
     "fx":   ["usdkrw"],
@@ -138,6 +145,7 @@ ASOF_EARLY_FIELDS = {
     "ust10", "ust10_open", "ust10_high", "ust10_low",
     "ust2", "ust2_open", "ust2_high", "ust2_low",
     "wti",
+    "spx", "nasdaq", "vix",   # 미국 주가지수(FRN) — 미국 마감 후 조기반영. kospi는 한국이라 제외.
 }
 
 # CSV/Supabase에 '행을 낼지' 판정하는 앵커 = 한국선물 OR 미국물.
@@ -371,4 +379,5 @@ POSITIVE_FIELDS = {
     "ust10_open", "ust10_high", "ust10_low",
     "ust2", "ust2_open", "ust2_high", "ust2_low",
     "usdkrw_open", "usdkrw_high", "usdkrw_low", "usdkrw_close",   # FX 환율 >0
+    "kospi", "spx", "nasdaq", "vix",   # 주가지수·VIX >0 (RANGE_LIMITS는 안 둠 — 지수는 절대변동이 커 오탐)
 }
